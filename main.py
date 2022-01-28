@@ -1,10 +1,12 @@
+import argparse
+import json
+import sys
+
 from pprint import pprint
 
 from august.api import Api
 from august.authenticator import Authenticator, AuthenticationState
 import august
-
-import json
 
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
@@ -55,6 +57,32 @@ def main():
         authentication = authenticator.authenticate()
         token = authentication.access_token
 
+    parser = argparse.ArgumentParser(description="CLI for August API")
+    subparsers = parser.add_subparsers()
+
+    house = subparsers.add_parser('house', help='houses')
+    subparsers_house = house.add_subparsers()
+    house_list = subparsers_house.add_parser('list', help='list houses')
+    house_list.set_defaults(func=cli_house_list)
+    house_get = subparsers_house.add_parser('get', help='get house details')
+    house_get.add_argument("name")
+    house_get.set_defaults(func=cli_house_get)
+
+    lock = subparsers.add_parser('lock', help='locks')
+    subparsers_house = lock.add_subparsers()
+    lock_list = subparsers_house.add_parser('list', help='list locks')
+    lock_list.add_argument("house", nargs="?", help="get locks for a specific house name")
+    lock_list.set_defaults(func=cli_lock_list)
+    lock_get = subparsers_house.add_parser('get', help='get lock details')
+    lock_get.add_argument("house", help="house name")
+    lock_get.add_argument("lock", help="lock name")
+    lock_get.set_defaults(func=cli_lock_get)
+
+    args = parser.parse_args()
+    args.func(args, api, token)
+
+    return
+
     # Once you have authenticated and validated you can use the access token to make API calls
     locks = api.get_locks(token)
     print(locks)
@@ -69,6 +97,59 @@ def main():
 
     pin = api.get_pin(token, lock.device_id, "61de59d3bbfc7d8ff6e02bb6")
     pprint(pin)
+
+
+def cli_house_list(args, api, token):
+    resp = api.get_houses(token)
+    pprint(resp.json())
+
+
+def cli_house_get(args, api, token):
+    name = args.name
+    details = get_house(name, api, token)
+    pprint(details)
+
+
+def get_house(name, api, token):
+    houses = api.get_houses(token).json()
+    house_id = None
+    for house in houses:
+        if house["HouseName"] == name:
+            house_id = house["HouseID"]
+            break
+    if house_id is None:
+        print(f"error: House name not found: {name}", file=sys.stderr)
+        return
+    details = api.get_house(token, house_id)
+    return details
+
+
+def cli_lock_list(args, api, token):
+    house = args.house
+    locks = api.get_locks(token)
+    if house is not None:
+        house_details = get_house(house, api, token)
+        locks = [l for l in locks if l.house_id == house_details["HouseID"]]
+    # pprint(locks)
+    for lock in locks:
+        pprint(lock.data)
+
+
+def cli_lock_get(args, api, token):
+    house = args.house
+    lock = args.lock
+    locks = api.get_locks(token)
+    if house is not None:
+        house_details = get_house(house, api, token)
+        locks = [l for l in locks if l.house_id == house_details["HouseID"]]
+    if lock is not None:
+        locks = [l for l in locks if l.device_name == lock]
+    for lock in locks:
+        lock_obj = api.get_lock_detail(token, lock.device_id)
+        print(lock_obj)
+        pprint(lock_obj.data)
+
+
 
 
 # Press the green button in the gutter to run the script.
