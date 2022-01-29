@@ -1,12 +1,24 @@
 import argparse
+import datetime
 import json
 import sys
+import time
 
 from pprint import pprint
 
+import dateutil.parser
+
 from august.api import Api
 from august.authenticator import Authenticator, AuthenticationState
+from august import api_common
+from august.api_common import API_BASE_URL
 import august
+
+API_GET_USERS_URL = API_BASE_URL + "/users"
+API_ADD_USER_URL = API_BASE_URL + "/unverifiedusers"
+API_UPDATE_USER_URL = API_BASE_URL + "/locks/{lock_id}/users/{user_id}/pin"
+API_SYNC_PINS_URL = API_BASE_URL + "/locks/{lock_id}/pins/sync"
+
 
 # Press Shift+F10 to execute it or replace it with your code.
 # Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
@@ -69,14 +81,29 @@ def main():
     house_get.set_defaults(func=cli_house_get)
 
     lock = subparsers.add_parser('lock', help='locks')
-    subparsers_house = lock.add_subparsers()
-    lock_list = subparsers_house.add_parser('list', help='list locks')
+    subparsers_lock = lock.add_subparsers()
+    lock_list = subparsers_lock.add_parser('list', help='list locks')
     lock_list.add_argument("house", nargs="?", help="get locks for a specific house name")
     lock_list.set_defaults(func=cli_lock_list)
-    lock_get = subparsers_house.add_parser('get', help='get lock details')
+    lock_get = subparsers_lock.add_parser('get', help='get lock details')
     lock_get.add_argument("house", help="house name")
     lock_get.add_argument("lock", help="lock name")
     lock_get.set_defaults(func=cli_lock_get)
+
+    user = subparsers.add_parser('user', help='users')
+    subparsers_user = user.add_subparsers()
+    user_list = subparsers_user.add_parser('list', help='list users')
+    # user_list.add_argument("house", nargs="?", help="get users for a specific house name")
+    user_list.set_defaults(func=cli_user_list)
+    user_add = subparsers_user.add_parser('add', help='add user')
+    user_add.add_argument("house", help="house name")
+    user_add.add_argument("lock", help="lock name")
+    user_add.add_argument("first_name", help="first name")
+    user_add.add_argument("last_name", help="last name")
+    user_add.add_argument("--start", help="start time")
+    user_add.add_argument("--end", help="end time")
+    # user_list.add_argument("house", nargs="?", help="get users for a specific house name")
+    user_add.set_defaults(func=cli_user_add)
 
     args = parser.parse_args()
     args.func(args, api, token)
@@ -97,6 +124,136 @@ def main():
 
     pin = api.get_pin(token, lock.device_id, "61de59d3bbfc7d8ff6e02bb6")
     pprint(pin)
+
+
+def cli_user_list(args, api, token):
+    users = api._dict_to_api({"method": "get", "url": API_GET_USERS_URL, "access_token": token}).json()
+    pprint(users)
+    # for lock in locks:
+    #     pprint(lock.data)
+
+
+def cli_user_add(args, api, token):
+    house = args.house
+    lock = args.lock
+    first_name = args.first_name
+    last_name = args.last_name
+    start = args.start
+    end = args.end
+
+    start_time = (dateutil.parser.parse(start) + datetime.timedelta(seconds=time.timezone)).isoformat(timespec='milliseconds')+'Z'
+    end_time = (dateutil.parser.parse(end) + datetime.timedelta(seconds=time.timezone)).isoformat(timespec='milliseconds')+'Z'
+
+    lock_obj = get_lock(house, lock, api, token)
+    lock_id = lock_obj.device_id
+
+    add_user(first_name, last_name, start_time, end_time, lock_id, api, token)
+
+
+def add_user(first_name, last_name, start_time, end_time, lock_id, api, token):
+    """ Add a user to a lock
+
+    Reverse engineering notes:
+    - Timestamp error messages give us a prescribed format: "must follow pattern YYYY-MM-DDTHH:mm:ss.SSSZ"
+    """
+    resp = api._dict_to_api({"method": "post", "url": API_ADD_USER_URL.format(), "access_token": token,
+                             "json":
+                                 {'lockID': lock_id,
+                                  'firstName': first_name,
+                                  'lastName': last_name,
+                                  }
+                             }
+                            )
+    print(resp.status_code)
+    pprint(resp.json())
+    new_user = resp.json()
+    new_id = new_user['id']
+
+    resp = api._dict_to_api({"method": "put", "url": API_UPDATE_USER_URL.format(lock_id=lock_id, user_id=new_id), "access_token": token,
+                             "json": {
+                                 "state": "load",
+                                 "action": "intent",
+                                 "pin": new_user["pin"],
+                                 'accessType': 'temporary',
+                                 # 'accessTimes': 'DTSTART=2022-02-07T23:00:00.000Z;DTEND=2022-02-08T19:05:00.000Z',
+                                 'accessTimes': f'DTSTART={start_time};DTEND={end_time}',
+                             },
+                             })
+    print(resp.status_code)
+    pprint(resp.json())
+
+    resp = api._dict_to_api({"method": "put", "url": API_UPDATE_USER_URL.format(lock_id=lock_id, user_id=new_id), "access_token": token,
+                             "json": {
+                                 "state": "load",
+                                 "action": "commit",
+                                 "pin": new_user["pin"],
+                                 'accessType': 'temporary',
+                                 # 'accessTimes': 'DTSTART=2022-02-07T23:00:00.000Z;DTEND=2022-02-08T19:05:00.000Z',
+                                 'accessTimes': f'DTSTART={start_time};DTEND={end_time}',
+                             },
+                             })
+    print(resp.status_code)
+    pprint(resp.json())
+
+    resp = api._dict_to_api({"method": "put", "url": API_UPDATE_USER_URL.format(lock_id=lock_id, user_id=new_id), "access_token": token,
+                             "json": {
+                                 "state": "disable",
+                                 "action": "intent",
+                                 "pin": new_user["pin"],
+                                 'accessType': 'temporary',
+                                 # 'accessTimes': 'DTSTART=2022-02-07T23:00:00.000Z;DTEND=2022-02-08T19:05:00.000Z',
+                                 'accessTimes': f'DTSTART={start_time};DTEND={end_time}',
+                             },
+                             })
+    print(resp.status_code)
+    pprint(resp.json())
+
+    resp = api._dict_to_api({"method": "put", "url": API_UPDATE_USER_URL.format(lock_id=lock_id, user_id=new_id), "access_token": token,
+                             "json": {
+                                 "state": "disable",
+                                 "action": "commit",
+                                 "pin": new_user["pin"],
+                                 'accessType': 'temporary',
+                                 # 'accessTimes': 'DTSTART=2022-02-07T23:00:00.000Z;DTEND=2022-02-08T19:05:00.000Z',
+                                 'accessTimes': f'DTSTART={start_time};DTEND={end_time}',
+                             },
+                             })
+    print(resp.status_code)
+    pprint(resp.json())
+
+    resp = api._dict_to_api({"method": "put", "url": API_UPDATE_USER_URL.format(lock_id=lock_id, user_id=new_id), "access_token": token,
+                             "json": {
+                                 "state": "enable",
+                                 "action": "intent",
+                                 "pin": new_user["pin"],
+                                 'accessType': 'temporary',
+                                 # 'accessTimes': 'DTSTART=2022-02-07T23:00:00.000Z;DTEND=2022-02-08T19:05:00.000Z',
+                                 'accessTimes': f'DTSTART={start_time};DTEND={end_time}',
+                             },
+                             })
+    print(resp.status_code)
+    pprint(resp.json())
+
+    resp = api._dict_to_api({"method": "put", "url": API_UPDATE_USER_URL.format(lock_id=lock_id, user_id=new_id), "access_token": token,
+                             "json": {
+                                 "state": "enable",
+                                 "action": "commit",
+                                 "pin": new_user["pin"],
+                                 'accessType': 'temporary',
+                                 # 'accessTimes': 'DTSTART=2022-02-07T23:00:00.000Z;DTEND=2022-02-08T19:05:00.000Z',
+                                 'accessTimes': f'DTSTART={start_time};DTEND={end_time}',
+                             },
+                             })
+    print(resp.status_code)
+    pprint(resp.json())
+
+    # Sync URL doesn't seem to help. interestingly it returns "{'numRecords': 0}"
+    resp = api._dict_to_api({"method": "put", "url": API_SYNC_PINS_URL.format(lock_id=lock_id), "access_token": token,
+                             "json": {"pin": new_user["pin"]},
+                             })
+    print(resp.status_code)
+    pprint(resp.json())
+    return
 
 
 def cli_house_list(args, api, token):
@@ -138,18 +295,25 @@ def cli_lock_list(args, api, token):
 def cli_lock_get(args, api, token):
     house = args.house
     lock = args.lock
+    lock_obj = get_lock(house, lock, api, token)
+    print(lock_obj)
+    pprint(lock_obj.data)
+
+
+def get_lock(house, lock, api, token):
     locks = api.get_locks(token)
     if house is not None:
         house_details = get_house(house, api, token)
         locks = [l for l in locks if l.house_id == house_details["HouseID"]]
     if lock is not None:
         locks = [l for l in locks if l.device_name == lock]
-    for lock in locks:
-        lock_obj = api.get_lock_detail(token, lock.device_id)
-        print(lock_obj)
-        pprint(lock_obj.data)
-
-
+    if len(locks) > 1:
+        print(f"warning: multiple locks found for {house}/{lock}", file=sys.stderr)
+    elif len(locks) == 0:
+        raise Exception(f"error: no locks found for {house}/{lock}")
+    lock = locks[0]
+    lock_obj = api.get_lock_detail(token, lock.device_id)
+    return lock_obj
 
 
 # Press the green button in the gutter to run the script.
