@@ -14,7 +14,7 @@ from august import api_common
 from august.api_common import API_BASE_URL
 import august
 
-API_GET_USERS_URL = API_BASE_URL + "/users"
+API_GET_USER_ME_URL = API_BASE_URL + "/users/me"
 API_ADD_USER_URL = API_BASE_URL + "/unverifiedusers"
 API_UPDATE_USER_URL = API_BASE_URL + "/locks/{lock_id}/users/{user_id}/pin"
 API_SYNC_PINS_URL = API_BASE_URL + "/locks/{lock_id}/pins/sync"
@@ -92,17 +92,15 @@ def main():
 
     user = subparsers.add_parser('user', help='users')
     subparsers_user = user.add_subparsers()
-    user_list = subparsers_user.add_parser('list', help='list users')
-    # user_list.add_argument("house", nargs="?", help="get users for a specific house name")
-    user_list.set_defaults(func=cli_user_list)
-    user_add = subparsers_user.add_parser('add', help='add user')
+    user_me = subparsers_user.add_parser('me', help='get user details')
+    user_me.set_defaults(func=cli_user_me)
+    user_add = subparsers_user.add_parser('add', help='add user -- experimental and mostly non-functional!')
     user_add.add_argument("house", help="house name")
     user_add.add_argument("lock", help="lock name")
     user_add.add_argument("first_name", help="first name")
     user_add.add_argument("last_name", help="last name")
     user_add.add_argument("--start", help="start time")
     user_add.add_argument("--end", help="end time")
-    # user_list.add_argument("house", nargs="?", help="get users for a specific house name")
     user_add.set_defaults(func=cli_user_add)
 
     args = parser.parse_args()
@@ -126,8 +124,8 @@ def main():
     pprint(pin)
 
 
-def cli_user_list(args, api, token):
-    users = api._dict_to_api({"method": "get", "url": API_GET_USERS_URL, "access_token": token}).json()
+def cli_user_me(args, api, token):
+    users = api._dict_to_api({"method": "get", "url": API_GET_USER_ME_URL, "access_token": token}).json()
     pprint(users)
     # for lock in locks:
     #     pprint(lock.data)
@@ -247,7 +245,8 @@ def add_user(first_name, last_name, start_time, end_time, lock_id, api, token):
     print(resp.status_code)
     pprint(resp.json())
 
-    # Sync URL doesn't seem to help. interestingly it returns "{'numRecords': 0}"
+    # Sync URL doesn't seem to help. interestingly it returns "{'numRecords': 0}".
+    # But adding the pin arg received a 202 response at least once.
     resp = api._dict_to_api({"method": "put", "url": API_SYNC_PINS_URL.format(lock_id=lock_id), "access_token": token,
                              "json": {"pin": new_user["pin"]},
                              })
@@ -289,7 +288,8 @@ def cli_lock_list(args, api, token):
         locks = [l for l in locks if l.house_id == house_details["HouseID"]]
     # pprint(locks)
     for lock in locks:
-        pprint(lock.data)
+        print(lock)
+        # pprint(lock.data)
 
 
 def cli_lock_get(args, api, token):
